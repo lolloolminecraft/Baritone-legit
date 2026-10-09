@@ -11,46 +11,105 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+        base: [v066, v056]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-      - name: Checkout VulkanMod 0.6.6
+      - name: Prepare VulkanMod source
         run: |
           git clone https://github.com/xCollateral/VulkanMod.git src
           cd src
-          git checkout 67e20f1f359a3a0611e2312a8a72e47fc9a09737
-      - name: Set Minecraft 1.21.8
+          if [ "${{ matrix.base }}" = "v066" ]; then
+            git checkout 67e20f1f359a3a0611e2312a8a72e47fc9a09737
+          else
+            git checkout 0.5.5
+            curl -L --fail --retry 3 "https://cdn.modrinth.com/data/JYQhtZtO/versions/7pYvUnJk/VulkanMod_1.21.5-0.5.6-sources.jar" -o ../sources.jar
+            curl -L --fail --retry 3 "https://cdn.modrinth.com/data/JYQhtZtO/versions/7pYvUnJk/VulkanMod_1.21.5-0.5.6.jar" -o ../release.jar
+            rm -rf src/main/java src/main/resources
+            mkdir -p src/main/java src/main/resources
+            python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          root = Path('.')
+          with ZipFile('../sources.jar') as z:
+              for n in z.namelist():
+                  if n.endswith('.java') and not n.startswith('META-INF/'):
+                      p = root / 'src/main/java' / n
+                      p.parent.mkdir(parents=True, exist_ok=True)
+                      p.write_bytes(z.read(n))
+          with ZipFile('../release.jar') as z:
+              for n in z.namelist():
+                  if n.endswith('/') or n.endswith('.class') or n.startswith('META-INF/jars/'):
+                      continue
+                  if n.startswith('net/') or n.startswith('org/') or n.startswith('com/'):
+                      continue
+                  if n.startswith('META-INF/') and n != 'META-INF/MANIFEST.MF':
+                      continue
+                  if n == 'META-INF/MANIFEST.MF':
+                      continue
+                  p = root / 'src/main/resources' / n
+                  p.parent.mkdir(parents=True, exist_ok=True)
+                  p.write_bytes(z.read(n))
+          PY
+          fi
+      - name: Port build configuration to 1.21.8
         run: |
           cd src
           python3 - <<'PY'
           from pathlib import Path
+          p = Path('build.gradle')
+          s = p.read_text()
+          s = s.replace("id 'fabric-loom' version '1.9.2'", "id 'fabric-loom' version '1.11-SNAPSHOT'")
+          s = s.replace("id 'fabric-loom' version '1.12-SNAPSHOT'", "id 'fabric-loom' version '1.11-SNAPSHOT'")
+          p.write_text(s)
+          p = Path('gradle/wrapper/gradle-wrapper.properties')
+          if p.exists():
+              s = p.read_text()
+              import re
+              s = re.sub(r'gradle-[0-9.]+-bin\\.zip', 'gradle-8.14-bin.zip', s)
+              p.write_text(s)
           p = Path('gradle.properties')
           s = p.read_text()
-          s = s.replace('minecraft_version = 1.21.10', 'minecraft_version = 1.21.8')
-          s = s.replace('yarn_mappings = 1.21.10+build.2', 'yarn_mappings = 1.21.8+build.1')
-          s = s.replace('fabric_version = 0.138.0+1.21.10', 'fabric_version = 0.136.1+1.21.8')
-          s = s.replace('mod_version = 0.6.6-dev', 'mod_version = 0.6.6+1.21.8-port')
-          s = s.replace('archives_base_name = VulkanMod_1.21.10', 'archives_base_name = VulkanMod_1.21.8')
+          import re
+          s = re.sub(r'minecraft_version\s*=\s*[^\n]+', 'minecraft_version=1.21.8', s)
+          s = re.sub(r'yarn_mappings\s*=\s*[^\n]+', 'yarn_mappings=1.21.8+build.1', s)
+          s = re.sub(r'loader_version\s*=\s*[^\n]+', 'loader_version=0.17.3', s)
+          s = re.sub(r'fabric_version\s*=\s*[^\n]+', 'fabric_version=0.136.1+1.21.8', s)
+          s = re.sub(r'mod_version\s*=\s*[^\n]+', 'mod_version = 0.6.6+1.21.8-port' if '${{ matrix.base }}' == 'v066' else 'mod_version = 0.5.6+1.21.8-port', s)
+          s = re.sub(r'archives_base_name\s*=\s*[^\n]+', 'archives_base_name = VulkanMod_1.21.8', s)
           p.write_text(s)
           p = Path('src/main/resources/fabric.mod.json')
-          s = p.read_text().replace('"minecraft": ["1.21.9", "1.21.10"]', '"minecraft": ["1.21.8"]')
-          p.write_text(s)
+          if p.exists():
+              s = p.read_text()
+              s = re.sub(r'"minecraft"\s*:\s*\[[^\]]*\]', '"minecraft": ["1.21.8"]', s)
+              p.write_text(s)
           PY
       - name: Build
         run: |
           cd src
           chmod +x gradlew
-          ./gradlew build --stacktrace --no-daemon
+          ./gradlew build --stacktrace --no-daemon 2>&1 | tee ../build-${{ matrix.base }}-${{ runner.os }}.log
       - name: Collect JAR
+        if: success()
         run: |
           mkdir -p out
           find src/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' -exec cp {} out/ \;
           ls -lah out
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: VulkanMod-1.21.8-port
-          path: out/*.jar
-          if-no-files-found: error
+          name: VulkanMod-${{ matrix.base }}-${{ runner.os }}
+          path: |
+            out/*.jar
+            build-${{ matrix.base }}-${{ runner.os }}.log
+          if-no-files-found: warn
