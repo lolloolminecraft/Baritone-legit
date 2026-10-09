@@ -19,6 +19,7 @@ jobs:
           git clone --depth 1 --branch 0.5.5 https://github.com/xCollateral/VulkanMod.git src
           curl -L --fail --retry 3 "https://cdn.modrinth.com/data/JYQhtZtO/versions/7pYvUnJk/VulkanMod_1.21.5-0.5.6-sources.jar" -o sources.jar
           curl -L --fail --retry 3 "https://cdn.modrinth.com/data/JYQhtZtO/versions/7pYvUnJk/VulkanMod_1.21.5-0.5.6.jar" -o release.jar
+          curl -L --fail --retry 3 "https://maven.fabricmc.net/net/fabricmc/intermediary/1.21.8/intermediary-1.21.8-v2.jar" -o intermediary.jar
           cd src
           rm -rf src/main/java
           mkdir -p src/main/java src/main/resources
@@ -52,6 +53,19 @@ jobs:
                   p = Path('src/main/resources') / name
                   p.parent.mkdir(parents=True, exist_ok=True)
                   p.write_bytes(z.read(name))
+
+          with ZipFile('../intermediary.jar') as z:
+              data = z.read('mappings/mappings.tiny').decode()
+          lines = data.splitlines()
+          if lines[0] != 'tiny\t2\t0\tofficial\tintermediary':
+              raise SystemExit(lines[0])
+          lines[0] = 'tiny\t2\t0\tofficial\tnamed'
+          Path('intermediary-named.tiny').write_text('\n'.join(lines) + '\n')
+
+          p = Path('src/main/resources/vulkanmod.accesswidener')
+          s = p.read_text()
+          s = s.replace('accessWidener\tv1\tintermediary', 'accessWidener\tv1\tnamed', 1)
+          p.write_text(s)
           PY
       - name: Configure Minecraft 1.21.8
         run: |
@@ -63,7 +77,7 @@ jobs:
           p = Path('build.gradle')
           s = p.read_text()
           s = s.replace("id 'fabric-loom' version '1.9.2'", "id 'fabric-loom' version '1.11.8'")
-          s = s.replace('mappings loom.officialMojangMappings()', 'mappings "net.fabricmc:intermediary:${project.minecraft_version}:v2"')
+          s = s.replace('mappings loom.officialMojangMappings()', 'mappings files("intermediary-named.tiny")')
           s = re.sub(r'^\s*includeModule\("fabric-rendering-data-attachment-v1"\)\s*$', '', s, flags=re.M)
           p.write_text(s)
 
@@ -96,6 +110,7 @@ jobs:
           grep -E 'minecraft_version|loader_version|fabric_version|mod_version|archives_base_name' gradle.properties
           grep -n 'minecraft' src/main/resources/fabric.mod.json || true
           grep -n 'mappings ' build.gradle
+          head -n 1 intermediary-named.tiny
           head -n 1 src/main/resources/vulkanmod.accesswidener
           grep distributionUrl gradle/wrapper/gradle-wrapper.properties
       - name: Build
