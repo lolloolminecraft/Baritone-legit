@@ -4,9 +4,9 @@ on:
   push:
     branches:
       - vulkanmod-1.21.8-port
-    paths:
-      - .github/workflows/vulkanmod-1.21.8-port.yml
-      - vulkanmod-port/**
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
