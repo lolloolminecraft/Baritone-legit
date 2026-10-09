@@ -36,7 +36,8 @@ jobs:
           keep_names = {
               'fabric.mod.json',
               'vulkanmod.mixins.json',
-              'vulkanmod-common.mixins.json'
+              'vulkanmod-common.mixins.json',
+              'vulkanmod.accesswidener'
           }
           with ZipFile('../release.jar') as z:
               for name in z.namelist():
@@ -62,6 +63,7 @@ jobs:
           p = Path('build.gradle')
           s = p.read_text()
           s = s.replace("id 'fabric-loom' version '1.9.2'", "id 'fabric-loom' version '1.11.8'")
+          s = s.replace('mappings loom.officialMojangMappings()', 'mappings "net.fabricmc:intermediary:${project.minecraft_version}:v2"')
           s = re.sub(r'^\s*includeModule\("fabric-rendering-data-attachment-v1"\)\s*$', '', s, flags=re.M)
           p.write_text(s)
 
@@ -93,6 +95,7 @@ jobs:
           cd src
           grep -E 'minecraft_version|loader_version|fabric_version|mod_version|archives_base_name' gradle.properties
           grep -n 'minecraft' src/main/resources/fabric.mod.json || true
+          grep -n 'mappings ' build.gradle
           head -n 1 src/main/resources/vulkanmod.accesswidener
           grep distributionUrl gradle/wrapper/gradle-wrapper.properties
       - name: Build
