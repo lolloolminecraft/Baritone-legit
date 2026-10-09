@@ -66,6 +66,11 @@ jobs:
           s = re.sub(r'^\s*includeModule\("fabric-rendering-data-attachment-v1"\)\s*$', '', s, flags=re.M)
           p.write_text(s)
 
+          p = Path('gradle/wrapper/gradle-wrapper.properties')
+          s = p.read_text()
+          s = re.sub(r'gradle-[0-9.]+-bin\.zip', 'gradle-8.14-bin.zip', s)
+          p.write_text(s)
+
           p = Path('gradle.properties')
           s = p.read_text()
           replacements = {
@@ -89,6 +94,7 @@ jobs:
           cd src
           grep -E 'minecraft_version|loader_version|fabric_version|mod_version|archives_base_name' gradle.properties
           grep -n 'minecraft' src/main/resources/fabric.mod.json || true
+          grep distributionUrl gradle/wrapper/gradle-wrapper.properties
       - name: Build
         shell: bash
         run: |
