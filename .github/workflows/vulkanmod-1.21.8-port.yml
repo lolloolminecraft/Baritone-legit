@@ -36,7 +36,6 @@ jobs:
           keep_names = {
               'fabric.mod.json',
               'vulkanmod.mixins.json',
-              'vulkanmod.accesswidener',
               'vulkanmod-common.mixins.json'
           }
           with ZipFile('../release.jar') as z:
@@ -94,6 +93,7 @@ jobs:
           cd src
           grep -E 'minecraft_version|loader_version|fabric_version|mod_version|archives_base_name' gradle.properties
           grep -n 'minecraft' src/main/resources/fabric.mod.json || true
+          head -n 1 src/main/resources/vulkanmod.accesswidener
           grep distributionUrl gradle/wrapper/gradle-wrapper.properties
       - name: Build
         shell: bash
