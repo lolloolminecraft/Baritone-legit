@@ -10,16 +10,50 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-      - name: Prepare source
+      - name: Prepare VulkanMod 0.5.6 source
         run: |
-          git clone https://github.com/xCollateral/VulkanMod.git src
+          git clone --depth 1 --branch 0.5.5 https://github.com/xCollateral/VulkanMod.git src
+          curl -L --fail --retry 3 "https://cdn.modrinth.com/data/JYQhtZtO/versions/7pYvUnJk/VulkanMod_1.21.5-0.5.6-sources.jar" -o sources.jar
+          curl -L --fail --retry 3 "https://cdn.modrinth.com/data/JYQhtZtO/versions/7pYvUnJk/VulkanMod_1.21.5-0.5.6.jar" -o release.jar
           cd src
-          git checkout 67e20f1f359a3a0611e2312a8a72e47fc9a09737
-      - name: Apply 1.21.8 base port
+          rm -rf src/main/java
+          mkdir -p src/main/java src/main/resources
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          with ZipFile('../sources.jar') as z:
+              for name in z.namelist():
+                  if name.endswith('.java') and not name.startswith('META-INF/'):
+                      p = Path('src/main/java') / name
+                      p.parent.mkdir(parents=True, exist_ok=True)
+                      p.write_bytes(z.read(name))
+
+          keep_names = {
+              'fabric.mod.json',
+              'vulkanmod.mixins.json',
+              'vulkanmod.accesswidener',
+              'vulkanmod-common.mixins.json'
+          }
+          with ZipFile('../release.jar') as z:
+              for name in z.namelist():
+                  if name.endswith('/') or name.endswith('.class') or name.startswith('META-INF/jars/'):
+                      continue
+                  if name.startswith('META-INF/'):
+                      continue
+                  if '/' not in name and name not in keep_names:
+                      continue
+                  if name.startswith(('net/', 'org/', 'com/')):
+                      continue
+                  p = Path('src/main/resources') / name
+                  p.parent.mkdir(parents=True, exist_ok=True)
+                  p.write_bytes(z.read(name))
+          PY
+      - name: Configure Minecraft 1.21.8
         run: |
           cd src
           python3 - <<'PY'
@@ -28,35 +62,47 @@ jobs:
 
           p = Path('build.gradle')
           s = p.read_text()
-          s = s.replace("id 'fabric-loom' version '1.12-SNAPSHOT'", "id 'fabric-loom' version '1.11-SNAPSHOT'")
-          s = s.replace('\tincludeModule("fabric-resource-loader-v1")\n', '')
+          s = s.replace("id 'fabric-loom' version '1.9.2'", "id 'fabric-loom' version '1.11.8'")
+          s = re.sub(r'^\s*includeModule\("fabric-rendering-data-attachment-v1"\)\s*$', '', s, flags=re.M)
           p.write_text(s)
 
           p = Path('gradle.properties')
           s = p.read_text()
-          s = re.sub(r'minecraft_version\s*=\s*[^\n]+', 'minecraft_version=1.21.8', s)
-          s = re.sub(r'yarn_mappings\s*=\s*[^\n]+', 'yarn_mappings=1.21.8+build.1', s)
-          s = re.sub(r'loader_version\s*=\s*[^\n]+', 'loader_version=0.17.3', s)
-          s = re.sub(r'fabric_version\s*=\s*[^\n]+', 'fabric_version=0.136.1+1.21.8', s)
-          s = re.sub(r'mod_version\s*=\s*[^\n]+', 'mod_version = 0.6.6+1.21.8-port', s)
-          s = re.sub(r'archives_base_name\s*=\s*[^\n]+', 'archives_base_name = VulkanMod_1.21.8', s)
+          replacements = {
+              'minecraft_version': '1.21.8',
+              'loader_version': '0.17.3',
+              'fabric_version': '0.136.1+1.21.8',
+              'mod_version': '0.6.6+1.21.8-compat',
+              'archives_base_name': 'VulkanMod_1.21.8'
+          }
+          for key, value in replacements.items():
+              s = re.sub(rf'^{key}\s*=\s*.*$', f'{key} = {value}', s, flags=re.M)
           p.write_text(s)
 
           p = Path('src/main/resources/fabric.mod.json')
           s = p.read_text()
-          s = re.sub(r'"minecraft"\s*:\s*\[[^\]]*\]', '"minecraft": ["1.21.8"]', s)
+          s = re.sub(r'"minecraft"\s*:\s*(?:\[[^\]]*\]|"[^"]*")', '"minecraft": ["1.21.8"]', s)
           p.write_text(s)
           PY
-      - name: Build
+      - name: Show port metadata
         run: |
           cd src
+          grep -E 'minecraft_version|loader_version|fabric_version|mod_version|archives_base_name' gradle.properties
+          grep -n 'minecraft' src/main/resources/fabric.mod.json || true
+      - name: Build
+        shell: bash
+        run: |
+          set -o pipefail
+          cd src
           chmod +x gradlew
-          ./gradlew build --stacktrace --no-daemon 2>&1 | tee ../build.log
+          ./gradlew clean build --stacktrace --no-daemon 2>&1 | tee ../build.log
       - name: Collect release jar
         if: success()
         run: |
           mkdir -p out
           find src/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' -exec cp {} out/ \;
+          test -n "$(find out -maxdepth 1 -type f -name '*.jar' -print -quit)"
+          sha256sum out/*.jar > SHA256SUMS.txt
           ls -lah out
       - uses: actions/upload-artifact@v4
         if: always()
@@ -65,4 +111,5 @@ jobs:
           path: |
             out/*.jar
             build.log
+            SHA256SUMS.txt
           if-no-files-found: warn
